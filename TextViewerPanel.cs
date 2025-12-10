@@ -1,0 +1,346 @@
+﻿// Copyright © 2017-2025 QL-Win Contributors
+//
+// This file is part of QuickLook program.
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+using ICSharpCode.AvalonEdit;
+using ICSharpCode.AvalonEdit.Document;
+using ICSharpCode.AvalonEdit.Rendering;
+using ICSharpCode.AvalonEdit.Search;
+//using QuickLook.Common.Helpers;
+using QuickLook.Common.Plugin;
+//using QuickLook.Plugin.TextViewer.Detectors;
+//using QuickLook.Plugin.TextViewer.Themes;
+//using QuickLook.Plugin.TextViewer.Themes.HighlightingDefinitions;
+using System;
+using System.Globalization;
+using System.IO;
+using System.Reflection;
+using System.Threading.Tasks;
+using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Input;
+using System.Windows.Media;
+using System.Windows.Threading;
+using System.Xml.XPath;
+using System.Collections.Generic;
+using Encoding = System.Text.Encoding;
+
+namespace QuickLook.Plugin.TextViewer;
+
+public partial class TextViewerPanel : TextEditor, IDisposable
+{
+	private bool _disposed;
+	#region
+	// 插件会使用quicklook主程序中的QuickLook.Common.dll,导致路径获取到的是主程序的插件路径(Local),但实际情况是插件自动安装实在其他路径下(Roaming\xxxx\quicklook\)
+	private static readonly CultureInfo CurrentCultureInfo = CultureInfo.CurrentUICulture;
+	private static readonly Dictionary<string, XPathNavigator> FileCache = [];
+	public static string GetTr(string id, string file = null, CultureInfo locale = null, string failsafe = null)
+	{
+		if (file == null)
+		{
+			var subDir = "";
+			file = Path.Combine(
+				Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location), // !path of QuickLook.Common.dll!
+				subDir, "Translations.config");
+		}
+
+		if (!File.Exists(file))
+			return failsafe ?? id;
+
+		if (locale == null)
+			locale = CurrentCultureInfo;
+
+		var nav = GetLangFile(file);
+
+		// try to get string
+		var s = GetStringFromXml(nav, id, locale);
+		if (s != null)
+			return s;
+
+		// try again for parent language
+		if (locale.Parent.Name != string.Empty)
+			s = GetStringFromXml(nav, id, locale.Parent);
+		if (s != null)
+			return s;
+
+		// use fallback language
+		s = GetStringFromXml(nav, id, CultureInfo.GetCultureInfo("en"));
+		if (s != null)
+			return s;
+
+		return failsafe ?? id;
+	}
+
+	private static string GetStringFromXml(XPathNavigator nav, string id, CultureInfo locale)
+	{
+		var result = nav.SelectSingleNode($@"/Translations/{locale.Name}/{id}");
+
+		return result?.Value;
+	}
+
+	private static XPathNavigator GetLangFile(string file)
+	{
+		if (FileCache.ContainsKey(file))
+			return FileCache[file];
+
+		var res = new XPathDocument(file).CreateNavigator();
+		FileCache.Add(file, res);
+		return res;
+	}
+	#endregion
+
+	static TextViewerPanel()
+    {
+        // Implementation of the Search Panel Styled with Fluent Theme
+        {
+            var groupDictionary = new ResourceDictionary();
+            groupDictionary.MergedDictionaries.Add(new ResourceDictionary()
+            {
+                Source = new Uri("pack://application:,,,/QuickLook.Plugin.TextViewer;component/Controls/DropDownButton.xaml", UriKind.Absolute)
+            });
+            groupDictionary.MergedDictionaries.Add(new ResourceDictionary()
+            {
+                Source = new Uri("pack://application:,,,/QuickLook.Plugin.TextViewer;component/Controls/SearchPanel.xaml", UriKind.Absolute)
+            });
+            Application.Current.Resources.MergedDictionaries.Add(groupDictionary);
+        }
+
+        // Initialize the Highlighting Theme Manager
+        //HighlightingThemeManager.Initialize();
+    }
+
+    public TextViewerPanel()
+    {
+        FontSize = 14;
+        ShowLineNumbers = false;
+        WordWrap = false;
+        IsReadOnly = true;
+        IsManipulationEnabled = true;
+        Options.EnableEmailHyperlinks = false;
+        Options.EnableHyperlinks = false;
+
+        ContextMenu = new ContextMenu();
+        ContextMenu.Items.Add(new MenuItem
+        {
+            Header = GetTr("Editor_Copy"),
+            Command = ApplicationCommands.Copy
+        });
+        ContextMenu.Items.Add(new MenuItem
+        {
+            Header = GetTr("Editor_SelectAll"),
+            Command = ApplicationCommands.SelectAll
+        });
+		// 
+		MenuItem wrapItem = new MenuItem 
+        { 
+            Header = GetTr("Word_Wrap"),
+			InputGestureText = "Alt+Z"
+        };
+        wrapItem.Click += (s, e) => WordWrap = !WordWrap;
+		ContextMenu.Items.Add(wrapItem);
+
+		ManipulationInertiaStarting += Viewer_ManipulationInertiaStarting;
+        ManipulationStarting += Viewer_ManipulationStarting;
+        ManipulationDelta += Viewer_ManipulationDelta;
+        KeyDown += Viewer_KeyDown;
+
+        PreviewMouseWheel += Viewer_MouseWheel;
+
+        FontFamily = new FontFamily(GetTr("Editor_FontFamily"));
+
+        TextArea.TextView.ElementGenerators.Add(new TruncateLongLines());
+
+        SearchPanel.Install(this);
+    }
+
+    public void Dispose()
+    {
+        _disposed = true;
+    }
+
+    private void Viewer_ManipulationInertiaStarting(object sender, ManipulationInertiaStartingEventArgs e)
+    {
+        e.TranslationBehavior = new InertiaTranslationBehavior
+        {
+            InitialVelocity = e.InitialVelocities.LinearVelocity,
+            DesiredDeceleration = 10d * 96d / (1000d * 1000d)
+        };
+    }
+
+    private void Viewer_MouseWheel(object sender, MouseWheelEventArgs e)
+    {
+        e.Handled = true;
+
+        ScrollToVerticalOffset(VerticalOffset - e.Delta);
+    }
+
+    private void Viewer_ManipulationDelta(object sender, ManipulationDeltaEventArgs e)
+    {
+        e.Handled = true;
+
+        var delta = e.DeltaManipulation;
+        ScrollToVerticalOffset(VerticalOffset - delta.Translation.Y);
+    }
+
+    private void Viewer_ManipulationStarting(object sender, ManipulationStartingEventArgs e)
+    {
+        e.Mode = ManipulationModes.Translate;
+    }
+
+    private void Viewer_KeyDown(object sender, KeyEventArgs e)
+    {
+        // Support keyboard shortcuts for RTL and LTR text direction
+        if (Keyboard.IsKeyDown(Key.LeftCtrl) || Keyboard.IsKeyDown(Key.RightCtrl))
+        {
+            // RTL: Ctrl + RShift
+            // LTR: Ctrl + LShift
+            if (Keyboard.IsKeyDown(Key.RightShift))
+                FlowDirection = System.Windows.FlowDirection.RightToLeft;
+            else if (Keyboard.IsKeyDown(Key.LeftShift))
+                FlowDirection = System.Windows.FlowDirection.LeftToRight;
+        }
+        else if (Keyboard.IsKeyDown(Key.LeftAlt) || Keyboard.IsKeyDown(Key.RightAlt))
+        {
+            if (Keyboard.IsKeyDown(Key.Z))
+            {
+                WordWrap = !WordWrap;
+            }
+        }
+    }
+
+    private class TruncateLongLines : VisualLineElementGenerator
+    {
+        private const int MAX_LENGTH = 10000;
+        private const string ELLIPSIS = "⁞⁞[TRUNCATED]⁞⁞";
+
+        public override int GetFirstInterestedOffset(int startOffset)
+        {
+            var line = CurrentContext.VisualLine.LastDocumentLine;
+            if (line.Length > MAX_LENGTH)
+            {
+                int ellipsisOffset = line.Offset + MAX_LENGTH - ELLIPSIS.Length;
+                if (startOffset <= ellipsisOffset)
+                    return ellipsisOffset;
+            }
+            return -1;
+        }
+
+        public override VisualLineElement ConstructElement(int offset)
+        {
+            return new FormattedTextElement(ELLIPSIS, CurrentContext.VisualLine.LastDocumentLine.EndOffset - offset);
+        }
+    }
+
+    public void LoadFileAsync(string path, ContextObject context)
+    {
+#if false
+        _ = Task.Run(() =>
+        {
+            const int maxLength = 5 * 1024 * 1024;
+            const int maxHighlightingLength = (int)(0.5d * 1024 * 1024);
+            var buffer = new MemoryStream();
+            bool fileTooLong = false;
+
+            // Read file to memory stream
+            if (FormatDetector.Transfer(path, out string transferred))
+            {
+                byte[] bytes = Encoding.UTF8.GetBytes(transferred);
+                buffer.Write(bytes, 0, bytes.Length);
+            }
+            else
+            {
+                using var s = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                fileTooLong = s.Length > maxLength;
+                while (s.Position < s.Length && buffer.Length < maxLength)
+                {
+                    if (_disposed)
+                        break;
+
+                    var lb = new byte[8192];
+                    var count = s.Read(lb, 0, lb.Length);
+                    buffer.Write(lb, 0, count);
+                }
+            }
+
+            if (_disposed)
+                return;
+
+            if (fileTooLong)
+                context.Title += " (0 ~ 5MB)";
+
+            var bufferCopy = buffer.ToArray();
+            buffer.Dispose();
+
+            var encoding = EncodingDetector.DetectFromBytes(bufferCopy);
+            var text = encoding.GetString(bufferCopy);
+            var doc = new TextDocument(text);
+            doc.SetOwnerThread(Dispatcher.Thread);
+
+            if (_disposed)
+                return;
+
+            Dispatcher.BeginInvoke(() =>
+            {
+                var extension = Path.GetExtension(path);
+                var highlighting = HighlightingThemeManager.GetHighlightingByExtensionOrDetector(path, extension, text);
+
+                Encoding = encoding;
+                SyntaxHighlighting = bufferCopy.Length > maxHighlightingLength
+                    ? null
+                    : highlighting.SyntaxHighlighting;
+                Document = doc;
+
+                if (SyntaxHighlighting is ICustomHighlightingDefinition custom)
+                {
+                    foreach (var lineTransformer in custom.LineTransformers)
+                    {
+                        TextArea.TextView.LineTransformers.Add(lineTransformer);
+                    }
+                }
+
+                if (highlighting.IsDark)
+                {
+                    Background = Brushes.Transparent;
+                    SetResourceReference(ForegroundProperty, "WindowTextForeground");
+                }
+                else
+                {
+                    // if os dark mode, but not AllowDarkTheme, make background light
+                    Background = OSThemeHelper.AppsUseDarkTheme()
+                        ? new SolidColorBrush(Color.FromArgb(175, 255, 255, 255))
+                        : Brushes.Transparent;
+                }
+
+                // Support automatic RTL for text files
+                if (extension.Equals(".txt", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (CultureInfo.CurrentUICulture.TextInfo.IsRightToLeft)
+                    {
+                        string isSupportRTL = TranslationHelper.Get("IsSupportRTL",
+                            failsafe: bool.TrueString,
+                            domain: Assembly.GetExecutingAssembly().GetName().Name);
+
+                        if (bool.TrueString.Equals(isSupportRTL, StringComparison.OrdinalIgnoreCase))
+                            FlowDirection = System.Windows.FlowDirection.RightToLeft;
+                    }
+                }
+
+                context.IsBusy = false;
+            }, DispatcherPriority.Render);
+        });
+#endif
+    }
+}

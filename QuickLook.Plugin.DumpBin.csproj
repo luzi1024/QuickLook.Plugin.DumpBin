@@ -1,0 +1,52 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+    <PropertyGroup>
+        <OutputType>Library</OutputType>
+        <TargetFramework>net462</TargetFramework>
+        <RootNamespace>QuickLook.Plugin.DumpBin</RootNamespace>
+        <AssemblyName>QuickLook.Plugin.DumpBin</AssemblyName>
+	    <Platforms>AnyCPU;x64</Platforms>
+	    <UseWPF>true</UseWPF>
+	    <UseWindowsForms>true</UseWindowsForms>
+        <LangVersion>latest</LangVersion>
+	    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+	    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+	    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+	    <GenerateTargetFrameworkAttribute>false</GenerateTargetFrameworkAttribute>
+	    <DebugType>full</DebugType>
+	    <CodeAnalysisRuleSet>MinimumRecommendedRules.ruleset</CodeAnalysisRuleSet>
+    </PropertyGroup>
+
+    <PropertyGroup Condition="'$(Configuration)' == 'Debug'">
+        <Optimize>false</Optimize>
+        <OutputPath>bin\Debug\</OutputPath>
+        <DefineConstants>DEBUG;TRACE</DefineConstants>
+    </PropertyGroup>
+
+    <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+        <Optimize>true</Optimize>
+        <OutputPath>bin\Release\</OutputPath>
+        <DefineConstants>TRACE</DefineConstants>
+    </PropertyGroup>
+
+    <ItemGroup>
+      <Compile Remove="QuickLook.Common\**" />
+      <EmbeddedResource Remove="QuickLook.Common\**" />
+      <None Remove="QuickLook.Common\**" />
+      <Page Remove="QuickLook.Common\**" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <None Include="QuickLook.Plugin.Metadata.Base.config" />
+        <None Include="QuickLook.Plugin.Metadata.config">
+            <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+        </None>
+    </ItemGroup>
+
+    <ItemGroup>
+      <PackageReference Include="AvalonEdit" Version="6.3.1.120" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <ProjectReference Include="QuickLook.Common\QuickLook.Common.csproj" />
+    </ItemGroup>
+</Project>
