@@ -63,7 +63,7 @@ namespace QuickLook.Plugin.DumpBin
 			viewer.VerticalScrollBarVisibility = ScrollBarVisibility.Auto;
 			viewer.HorizontalScrollBarVisibility = ScrollBarVisibility.Auto;
 			// 要执行的命令
-			string command = pluginPath + "/external/dumpbin.exe /EXPORTS " + path;
+			string command = pluginPath + "/external/dumpbin.exe /EXPORTS " + $"\"{path}\"";
 			// 创建进程对象
 			Process process = new Process();
 
@@ -104,4 +104,5 @@ namespace QuickLook.Plugin.DumpBin
 		
 		}
     }
+
 }
